@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+import sys
+import os
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Submit multiple SLURM jobs')
+    parser.add_argument('job_file', help='File containing list of commands to run')
+    parser.add_argument('--partition', '-p', help='SLURM partition')
+    parser.add_argument('--time', '-t', default='04:00:00', help='Time limit (default: 4 hour)')
+    parser.add_argument('--mem', '-m', default='4G', help='Memory per job (default: 4GB)')
+    parser.add_argument('--cpu', '-c', default='1', type=int, help='Number of CPUs per job (default: 1)')
+    parser.add_argument('--name', '-n', default='swarm', help='Job name (default: swarm)')
+    return parser.parse_args()
+
+def submit_job(command, args):
+    # Create sbatch script
+    script = f"""#!/bin/bash
+#SBATCH --job-name={args.name}_pid{os.getpid()}
+{f'#SBATCH --partition={args.partition}' if args.partition else ''}
+#SBATCH --time={args.time}
+#SBATCH --mem={args.mem}
+#SBATCH --cpus-per-task={args.cpu}
+#SBATCH --output={args.name}_pid{os.getpid()}.%j.o
+#SBATCH --error={args.name}_pid{os.getpid()}.%j.e
+
+{command}
+"""
+    
+    # Write temporary script file
+    script_file = f'{args.name}.temp_job_{os.getpid()}.sh'
+    with open(script_file, 'w') as f:
+        f.write(script)
+    
+    try:
+        # Submit job using sbatch
+        result = subprocess.run(['sbatch', script_file], 
+                              capture_output=True, 
+                              text=True)
+        if result.returncode == 0:
+            job_id = result.stdout.strip().split()[-1]
+            print(f"Submitted job {job_id}")
+        else:
+            print(f"Error submitting job: {result.stderr}", file=sys.stderr)
+    finally:
+        # Clean up temporary script
+        os.remove(script_file)
+
+
+def main():
+    args = parse_args()
+    
+    # Read commands from job file
+    try:
+        with open(args.job_file) as f:
+            commands = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        print(f"Error: Job file '{args.job_file}' not found", file=sys.stderr)
+        sys.exit(1)
+    
+    # Submit each command as a separate job
+    for command in commands:
+        submit_job(command, args)
+
+if __name__ == '__main__':
+    main()
