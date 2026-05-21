@@ -7,25 +7,30 @@ import os
 def parse_args():
     parser = argparse.ArgumentParser(description='Submit multiple SLURM jobs')
     parser.add_argument('job_file', help='File containing list of commands to run')
-    parser.add_argument('--partition', '-p', help='SLURM partition')
-    parser.add_argument('--time', '-t', default='04:00:00', help='Time limit (default: 4 hour)')
+    parser.add_argument('--partition', '-p', default='cpu_q',help='SLURM partition')
+    parser.add_argument('--time', '-t', default='2-00:00:00', help='Time limit (default: 48 hour)')
     parser.add_argument('--mem', '-m', default='4G', help='Memory per job (default: 4GB)')
     parser.add_argument('--cpu', '-c', default='1', type=int, help='Number of CPUs per job (default: 1)')
     parser.add_argument('--name', '-n', default='swarm', help='Job name (default: swarm)')
+    parser.add_argument('--account', '-a', default='hourigan', help='Job name (default: swarm)')
+    parser.add_argument('--bundle', '-b', default=1, type=int, help='Number of commands per job (default: 1)')
     return parser.parse_args()
 
-def submit_job(command, args):
-    # Create sbatch script
+def submit_job(commands, args):
+    command_block = "\n".join(
+        f"echo '{cmd}'\necho \"################################################################################\"\n{cmd}"
+        for cmd in commands
+    )
     script = f"""#!/bin/bash
 #SBATCH --job-name={args.name}_pid{os.getpid()}
 {f'#SBATCH --partition={args.partition}' if args.partition else ''}
 #SBATCH --time={args.time}
 #SBATCH --mem={args.mem}
 #SBATCH --cpus-per-task={args.cpu}
+#SBATCH --account={args.account}
 #SBATCH --output={args.name}_pid{os.getpid()}.%j.o
 #SBATCH --error={args.name}_pid{os.getpid()}.%j.e
-
-{command}
+{command_block}
 """
     
     # Write temporary script file
@@ -46,6 +51,7 @@ def submit_job(command, args):
     finally:
         # Clean up temporary script
         os.remove(script_file)
+        pass
 
 
 def main():
@@ -59,9 +65,11 @@ def main():
         print(f"Error: Job file '{args.job_file}' not found", file=sys.stderr)
         sys.exit(1)
     
-    # Submit each command as a separate job
-    for command in commands:
-        submit_job(command, args)
+    # Split commands into bundles and submit each bundle as one job
+    bundle_size = max(1, args.bundle)
+    bundles = [commands[i:i + bundle_size] for i in range(0, len(commands), bundle_size)]
+    for bundle in bundles:
+        submit_job(bundle, args)
 
 if __name__ == '__main__':
     main()
